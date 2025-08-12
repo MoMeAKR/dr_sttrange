@@ -1,0 +1,5 @@
+setup.py
+mome_dt.egg-info/PKG-INFO
+mome_dt.egg-info/SOURCES.txt
+mome_dt.egg-info/dependency_links.txt
+mome_dt.egg-info/top_level.txt

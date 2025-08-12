@@ -1,0 +1,159 @@
+{
+  "nodes": [
+    {
+      "id": "root",
+      "node_type": "decision",
+      "desc": "Job offer, where to go?",
+      "modifications": {
+        "income_rating": 0,
+        "snowfall_rating": 0,
+        "magazine_rating": 0
+      },
+      "children": [
+        {"prob": 0.33, "child": "publishing"},
+        {"prob": 0.33, "child": "pizza"},
+        {"prob": 0.34, "child": "manufacturing"}
+      ]
+    },
+    {
+      "id": "publishing",
+      "node_type": "decision",
+      "desc": "Publishing job",
+      "modifications": {
+        "magazine_rating": 56
+      },
+      "children": [
+        {"prob": 0.6, "child": "publishing_high_income"},
+        {"prob": 0.4, "child": "publishing_low_income"}
+      ]
+    },
+    {
+      "id": "publishing_high_income",
+      "node_type": "decision",
+      "desc": "Publishing, $1500 disposable income",
+      "modifications": {
+        "income_rating": 75
+      },
+      "children": [
+        {"prob": 1.0, "child": "snowfall_publishing_city"}
+      ]
+    },
+    {
+      "id": "publishing_low_income",
+      "node_type": "decision",
+      "desc": "Publishing, $1300 disposable income",
+      "modifications": {
+        "income_rating": 25
+      },
+      "children": [
+        {"prob": 1.0, "child": "snowfall_publishing_city"}
+      ]
+    },
+    {
+      "id": "snowfall_publishing_city",
+      "node_type": "terminal",
+      "desc": "Snowfall",
+      "modifications": {},
+      "children": [
+        {
+          "prob": 0.15,
+          "outcome_desc": "Small snowfall",
+          "utility": {
+            "income_rating": "ctx['income_rating']",
+            "snowfall_rating": 25,
+            "magazine_rating": "ctx['magazine_rating']"
+          }
+        },
+        {
+          "prob": 0.70,
+          "outcome_desc": "Medium snowfall",
+          "utility": {
+            "income_rating": "ctx['income_rating']",
+            "snowfall_rating": 50,
+            "magazine_rating": "ctx['magazine_rating']"
+          }
+        },
+        {
+          "prob": 0.15,
+          "outcome_desc": "Big snowfall",
+          "utility": {
+            "income_rating": "ctx['income_rating']",
+            "snowfall_rating": 100,
+            "magazine_rating": "ctx['magazine_rating']"
+          }
+        }
+      ]
+    },
+    {
+      "id": "pizza",
+      "node_type": "terminal",
+      "desc": "Pizza",
+      "modifications": {
+        "magazine_rating": 100
+      },
+      "children": [],
+      "utility": {
+        "income_rating": "ctx['income_rating']",
+        "snowfall_rating": "ctx['snowfall_rating']",
+        "magazine_rating": "ctx['magazine_rating']"
+      }
+    },
+    {
+      "id": "manufacturing",
+      "node_type": "decision",
+      "desc": "Manufacturing",
+      "modifications": {
+        "income_rating": 100,
+        "magazine_rating": 0
+      },
+      "children": [
+        {"prob": 1.0, "child": "snowfall_manuf_city"}
+      ]
+    },
+    {
+      "id": "snowfall_manuf_city",
+      "node_type": "terminal",
+      "desc": "Snowfall",
+      "modifications": {},
+      "children": [
+        {
+          "prob": 0.15,
+          "outcome_desc": "Small snowfall in manuf city",
+          "utility": {
+            "income_rating": "ctx['income_rating']",
+            "snowfall_rating": 37.5,
+            "magazine_rating": "ctx['magazine_rating']"
+          }
+        },
+        {
+          "prob": 0.70,
+          "outcome_desc": "Medium snowfall in manuf city",
+          "utility": {
+            "income_rating": "ctx['income_rating']",
+            "snowfall_rating": 57.5,
+            "magazine_rating": "ctx['magazine_rating']"
+          }
+        },
+        {
+          "prob": 0.15,
+          "outcome_desc": "Big snowfall in manuf city",
+          "utility": {
+            "income_rating": "ctx['income_rating']",
+            "snowfall_rating": 80,
+            "magazine_rating": "ctx['magazine_rating']"
+          }
+        }
+      ]
+    }, 
+    {
+      "id": "utility",
+      "node_type": "utility",
+      "desc": "Averaging of the three metrics",
+      "modifications": {},
+      "children": [],
+      "variables": ["income_rating", "snowfall_rating", "magazine_rating"], 
+      "operation": "np.mean([income_rating, snowfall_rating, magazine_rating])"
+    }
+  ]
+}
+

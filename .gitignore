@@ -1,0 +1,5 @@
+test_material/
+tmp_results/
+*.jpg
+*.png
+initial_tests.py
