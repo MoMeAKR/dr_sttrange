@@ -1,3 +1,4 @@
+import momeutils 
 import subprocess 
 import os 
 import glob 
@@ -7,95 +8,166 @@ import astor
 import json
 
 
-def _generate_node_function(node, utility_node):
+def generate_node_function(node, utility_node):
     """
-    Generates a Python function string for a single decision or terminal node.
-    This helper prepares a list of statement dictionaries for mcodeutils.
-
-    Fixes:
-    - Avoids shadowing the function args list (['ctx']) by using `func_args`
-      for the function signature and `util_args` for utility computations.
-    - Ensures that local reads come from `ctx_to_use` (the possibly modified/copy ctx).
+    Dispatches node function generation to the appropriate handler
+    based on node_type: 'utility', 'decision', or 'terminal'.
     """
+    node_type = node['node_type']
 
-    func_name = node['name']
-    func_args = ['ctx']  # Function parameters must be only ['ctx'].
+    if node_type == 'root':
+        # return _generate_utility_node_function(node)
+        return _generate_root_node_function(node,utility_node)
+    elif node_type == 'decision':
+        return _generate_decision_node_function(node)
+    elif node_type == 'terminal':
+        return _generate_terminal_node_function(node, utility_node)
+    else:
+        raise ValueError(f"Unknown node_type: {node_type}")
+
+
+def _generate_root_node_function(node,utility_node): 
+    """
+    TARGET: 
+    def root(ctx):
+    "Select firm"
+    root_ctx = ctx.copy()
+    root_ctx['money'] = 0
+    root_ctx['transferable_expertise'] = 0
+    root_ctx['industry_credibility'] = 0
+    return ('Select firm', None, [(0.5, lambda _: european_project(root_ctx)), (0.5, lambda _: client_work(root_ctx))])
+
+    """
+    print(node)
+    print('\n')
+    print(utility_node)
     stmts = []
+    stmts.append({"type": "comment", "text": node['desc']})
+    stmts.append({"type": "assign", "var": "{}_ctx".format(node['name']), "value": "ctx.copy()"})
+    for uv in utility_node['variables']: 
+        stmts.append({"type": "assign", "var": "{}_ctx['{}']".format(node['name'], uv), "value": int("0")})
+    
+    stmts.append({"type": "assign", "var": "children", "value": []})
+    for child in node['children']: 
+        # lamb_func = compile(mcodeutils.simple_lambda_func(['_'], "{}(ctx)".format(child['child'])), filename = "<ast>", mode = "eval")
+        # input(lamb_func)
+        # input(astor.to_source(lamb_func))
+        stmts.append({"type": "append", "iterable": "children", "value": (0.5, ast.parse("lambda _ : {}({})".format(child['child'], '{}_ctx'.format(node['name']))))})
 
-    # Use a generic name for the local context copy for consistency.
+    stmts.append({"type": "assign", "var": "func_results", "value": "('{}', {}, children)".format(node['desc'], None)})
+    stmts.append({"type": "return", "var": "func_results"})
+    func = mcodeutils.simple_function_from_dicts(func_name = "root", 
+                                                 args = ['ctx'], 
+                                                 stmts = stmts)
+    return func 
+
+
+def _generate_decision_node_function(node):
+    """
+    Generates a Python function string for a decision node.
+    Handles deterministic and probabilistic child branches.
+
+    target 
+    def european_project_major_role_outcome(ctx):
+        "Major role in a European project leads to significant expertise and credibility gains, plus financial reward."
+        european_project_major_role_outcome_ctx = ctx.copy()
+        european_project_major_role_outcome_ctx['money'] = 3
+        european_project_major_role_outcome_ctx['transferable_expertise'] = 5
+        european_project_major_role_outcome_ctx['industry_credibility'] = 5
+
+        return ('Major role in a European project leads to significant expertise and credibility gains, plus financial reward.', [(1, utility(european_project_major_role_outcome_ctx['money'], european_project_major_role_outcome_ctx['transferable_expertise'], european_project_major_role_outcome_ctx['industry_credibility']), 'Successful leadership or major contribution in a European project yields strong professional and financial benefits.')], None)
+    """
+    func_name = node['name']
+    func_args = ['ctx']
+    stmts = []
     context_var = f"{func_name}_ctx"
+    desc = node['desc']
+    children = node['children']
 
-    # Determine whether we should create a context copy.
-    is_decision = node['node_type'] == 'decision'
-    is_deterministic_terminal = node['node_type'] == 'terminal' and 'utility' in node
+    # Add docstring
+    stmts.append({'type': 'raw', 'value': f'"""{desc}"""'})
+
+    # Always copy context for decision nodes
+    stmts.append({'type': 'assign', 'var': context_var, 'value': 'ctx.copy()'})
+    for k in node["modifications"].keys(): 
+        stmts.append({'type': 'assign', 'var': "{}['{}']".format(context_var, k), 'value': node['modifications'][k]})
+    ctx_to_use = context_var
+
+    # Handle deterministic (single child, prob=1.0) and probabilistic branches
+    if len(children) == 1 and children[0]['prob'] == 1.0:
+        lambda_expr = f"lambda _: {children[0]['child']}({ctx_to_use})"
+        return_expr = f"('{desc}', None, {lambda_expr})"
+    else:
+        lambdas = [f"({c['prob']}, lambda _: {c['child']}({ctx_to_use}))" for c in children]
+        return_expr = f"('{desc}', None, [{', '.join(lambdas)}])"
+    stmts.append({'type': 'return', 'var': return_expr})
+
+
+    func = mcodeutils.simple_function_from_dicts(
+        func_name=func_name,
+        args=func_args,
+        stmts=stmts
+    )
+
+    return func
+
+def _generate_terminal_node_function(node, utility_node):
+    """
+    Generates a Python function string for a terminal node.
+    Handles both deterministic and stochastic (probabilistic) terminal nodes.
+    """
+    func_name = node['name']
+    func_args = ['ctx']
+    stmts = []
+    context_var = f"{func_name}_ctx"
+    desc = node['desc']
+
+    # Determine if context copy is needed
     has_modifications = bool(node.get('modifications'))
-    needs_copy = has_modifications or is_decision or is_deterministic_terminal
+    is_deterministic_terminal = 'utility' in node
+    needs_copy = has_modifications or is_deterministic_terminal
     ctx_to_use = context_var if needs_copy else 'ctx'
 
-    # Add a docstring using the node's description.
-    stmts.append({'type': 'raw', 'value': f'"""{node["desc"]}"""'})
+    # Add docstring
+    stmts.append({'type': 'comment', 'text': desc})
 
-    # Create a context copy and apply modifications if required.
+    # Copy context and apply modifications if needed
     if needs_copy:
         stmts.append({'type': 'assign', 'var': ctx_to_use, 'value': 'ctx.copy()'})
         for key, value in node.get('modifications', {}).items():
-            # Use raw type for dict assignment, which is parsed as a statement.
             stmts.append({'type': 'raw', 'value': f"{ctx_to_use}['{key}'] = {repr(value)}"})
 
-    desc = node['desc']
+    # Stochastic terminal: multiple children with probabilities
+    if 'children' in node and node['children']:
+        # Collect context variables referenced in utility expressions
+        ctx_vars = {
+            v[v.find("'") + 1:v.rfind("'")]
+            for c in node['children']
+            for v in c.get('utility', {}).values()
+            if isinstance(v, str) and v.startswith("ctx[")
+        }
+        for var in sorted(ctx_vars):
+            stmts.append({'type': 'assign', 'var': var, 'value': f"{ctx_to_use}['{var}']"})
 
-    # --- Return Statement Logic ---
-    if node['node_type'] == 'decision':
-        children = node['children']
-        # Handle single, deterministic child branch (prob=1.0)
-        if len(children) == 1 and children[0]['prob'] == 1.0:
-            lambda_expr = f"lambda _: {children[0]['child']}({ctx_to_use})"
-            return_expr = f"('{desc}', None, {lambda_expr})"
-        # Handle multiple probabilistic child branches
-        else:
-            lambdas = [f"({c['prob']}, lambda _: {c['child']}({ctx_to_use}))" for c in children]
-            return_expr = f"('{desc}', None, [{', '.join(lambdas)}])"
+        # Build outcome tuples: (prob, utility_call, outcome_desc)
+        outcomes = []
+        for child in node['children']:
+            util_args = ["{}['{}']".format(ctx_to_use, k) for k in utility_node['variables']]
+            utility_call = f"{utility_node['name']}({', '.join(util_args)})"
+            outcomes.append(f"({child['prob']}, {utility_call}, '{child['outcome_desc']}')")
+        return_expr = f"('{desc}', [{', '.join(outcomes)}], None)"
         stmts.append({'type': 'return', 'var': return_expr})
 
-    elif node['node_type'] == 'terminal':
-        # Handle stochastic terminal nodes (with probabilistic outcomes)
-        if 'children' in node and node['children']:
-            # Extract context variables needed for utility calculations.
-            ctx_vars = {
-                v[v.find("'") + 1:v.rfind("'")]
-                for c in node['children']
-                for v in c.get('utility', {}).values()
-                if isinstance(v, str) and v.startswith("ctx[")
-            }
-            # Bind the referenced context values into local variables.
-            for var in sorted(list(ctx_vars)):
-                stmts.append({'type': 'assign', 'var': var, 'value': f"{ctx_to_use}['{var}']"})
+    # Deterministic terminal: single utility payoff
+    elif 'utility' in node:
+        util_args = [
+            str(node['utility'][uv]).replace('ctx', ctx_to_use)
+            for uv in utility_node['variables']
+        ]
+        utility_call = f"{utility_node['name']}({', '.join(util_args)})"
+        return_expr = f"('{desc}', {utility_call}, None)"
+        stmts.append({'type': 'return', 'var': return_expr})
 
-            # Build the list of outcome tuples (prob, utility_call, outcome_desc)
-            outcomes = []
-            for child in node['children']:
-                util_args = [
-                    child['utility'][uv].replace(f"ctx['{uv}']", uv) if isinstance(child['utility'][uv], str)
-                    else str(child['utility'][uv])
-                    for uv in utility_node['variables']
-                ]
-                utility_call = f"{utility_node['name']}({', '.join(util_args)})"
-                outcomes.append(f"({child['prob']}, {utility_call}, '{child['outcome_desc']}')")
-
-            return_expr = f"('{desc}', [{', '.join(outcomes)}], None)"
-            stmts.append({'type': 'return', 'var': return_expr})
-
-        # Handle deterministic terminal nodes (with a single utility payoff)
-        elif 'utility' in node:
-            util_args = [
-                str(node['utility'][uv]).replace('ctx', ctx_to_use)
-                for uv in utility_node['variables']
-            ]
-            utility_call = f"{utility_node['name']}({', '.join(util_args)})"
-            return_expr = f"('{desc}', {utility_call}, None)"
-            stmts.append({'type': 'return', 'var': return_expr})
-
-    # Important: pass func_args (['ctx']) so function signatures stay correct.
     return mcodeutils.simple_function_from_dicts(
         func_name=func_name,
         args=func_args,
@@ -103,24 +175,18 @@ def _generate_node_function(node, utility_node):
     )
 
 
+# def european_project_major_role_outcome(ctx):
+#     """Major role in a European project leads to significant expertise and credibility gains, plus financial reward."""
+#     european_project_major_role_outcome_ctx = ctx.copy()
+#     european_project_major_role_outcome_ctx['money'] = 3
+#     european_project_major_role_outcome_ctx['transferable_expertise'] = 5
+#     european_project_major_role_outcome_ctx['industry_credibility'] = 5
+#     return ('Major role in a European project leads to significant expertise and credibility gains, plus financial reward.', [(1, utility(ctx['money'], ctx['transferable_expertise'], ctx['industry_credibility']), 'Successful leadership or major contribution in a European project yields strong professional and financial benefits.')], None)
 
 
-
-
-# def exp():
-#     results = mome_dt_commons.enumerate_paths(root, {})
-#     expected_utility = mome_dt_commons.expected_utility(root, {})
-#     agg_results = {'tree_paths': results, 'expected_utility': expected_utility}
-#     save_path = '/home/mehdimounsif/Codes/my_libs/mome_dt/tmp_results/dt_results.json'
-#     os.makedirs('/home/mehdimounsif/Codes/my_libs/mome_dt/tmp_results', exist_ok=True)
-#     with open(save_path, 'w') as f:
-#         json.dump(agg_results, f, indent=4)
-#     return save_path
-
-# if __name__ == '__main__':
-#     exp()
 
 def default_exp(params): 
+
 
     
     current_save_path = params['exp_management'].get("results_file", os.path.join(os.path.dirname(__file__), "tmp_results", "default_dt_results.json"))
@@ -184,6 +250,7 @@ def build_result(data):
         )
         all_funcs_code.append(utility_func_code)
 
+    
     # 2. Add a separator for readability.
     all_funcs_code.append('\n# ---------- Nodes ----------')
 
@@ -191,7 +258,8 @@ def build_result(data):
     # other_nodes = [n for n in data['nodes'] if n['node_type'] != 'utility']
 
     for node in data['nodes']:
-        node_func_code = _generate_node_function(node, utility_params)
+        
+        node_func_code = generate_node_function(node, utility_params)
         all_funcs_code.append(node_func_code)
 
     # Join all generated function strings with double newlines for spacing.
@@ -205,6 +273,8 @@ def prepare_main_default(params):
 
 
 def prepare_dt(params): 
+
+   
 
     all_functions = build_result(params)
     
