@@ -1,6 +1,8 @@
+import matplotlib.patches as mpatches
 import networkx as nx
 import numpy as np 
 import matplotlib.pyplot as plt 
+from collections import defaultdict
 import os 
 plt.style.use('ggplot')
 
@@ -77,57 +79,157 @@ def expected_utility(node_fn, ctx):
 
 
 
-def plot_multiple_outcome_probabilities(data_dict, output_path, figsize=(8, 6)):
+
+def plot_multiple_outcome_probabilities(
+    data_dict,
+    output_path,
+    figsize= (12, 8),
+    cmap_name= "tab20",
+    show_values = False,
+    value_fmt= "{:.2f}",
+    alpha = 0.95,
+    min_segment_alpha = 0.4,
+) -> None:
     """
-    Plots outcome-probability bar plots for multiple datasets on the same figure.
+    Plots a grouped, stacked bar chart with dynamic segment opacity.
+
+    Behavior:
+    - The x-axis is grouped by outcome. If outcomes are numeric, their spacing
+      on the axis is proportional to their value. Otherwise, they are spaced evenly.
+    - Within each outcome group, there are separate, side-by-side bars for each label.
+    - Each individual bar is a stack of segments. The opacity of each segment is
+      proportional to its value relative to other segments in the same stack,
+      making larger contributors more opaque.
 
     Args:
-        data_dict (dict): Keys are labels, values are data structures (dicts) 
-                          containing 'tree_paths' or 'data'->'tree_paths'.
-        output_path (str): Path to save the output image.
-        figsize (tuple): Figure size.
+        data_dict: A mapping from a label (str) to a data structure.
+                   The data structure must contain 'tree_paths', either at the
+                   top level or nested under a 'data' key. 'tree_paths' is an
+                   iterable of dicts, each with 'path_utility' and 'path_prob'.
+        output_path: The file path where the plot image will be saved.
+        figsize: The size of the matplotlib figure (width, height) in inches.
+        cmap_name: The name of the matplotlib colormap to use for the labels.
+        show_values: If True, annotates each bar segment with its numeric value.
+        value_fmt: The format string used for the value annotations.
+        alpha: The maximum opacity for the largest segment in a stack (0.0 to 1.0).
+        min_segment_alpha: The minimum opacity for the smallest segments (0.0 to 1.0).
     """
-    plt.figure(figsize=figsize)
-    colors = plt.cm.get_cmap('tab10', len(data_dict))  # Get a colormap
+    # 1. Aggregate probabilities into lists for each (label, outcome) pair.
+    datasets_agg = defaultdict(lambda: defaultdict(list))
+    all_outcomes = set()
 
-    for idx, (label, data) in enumerate(data_dict.items()):
-        # Extract tree_paths
-        tree_paths = data.get('tree_paths', data.get('data', {}).get('tree_paths', []))
-        outcomes = []
-        probs = []
+    for label, data in data_dict.items():
+        tree_paths = data.get("tree_paths", data.get("data", {}).get("tree_paths", []))
+        if not tree_paths:
+            continue
         for path_info in tree_paths:
-            outcome = path_info.get('path_utility')
-            prob = path_info.get('path_prob')
-            if outcome is not None and prob is not None:
-                outcomes.append(outcome)
-                probs.append(prob)
-        # Sort by outcome for cleaner plot
-        sorted_pairs = sorted(zip(outcomes, probs), key=lambda x: x[0])
-        if sorted_pairs:
-            outcomes_sorted, probs_sorted = zip(*sorted_pairs)
-        else:
-            outcomes_sorted, probs_sorted = [], []
-        # Offset bars for each dataset to avoid overlap
-        bar_width = 0.6 / len(data_dict)
-        offsets = np.linspace(-0.3, 0.3, len(data_dict))
-        x_positions = np.array(outcomes_sorted) + offsets[idx]
-        plt.bar(
-            x_positions,
-            probs_sorted,
-            width=bar_width,
-            color=colors(idx),
-            edgecolor='black',
-            label=label
-        )
+            outcome = path_info.get("path_utility")
+            prob = path_info.get("path_prob")
+            if outcome is None or prob is None:
+                continue
+            try:
+                datasets_agg[label][outcome].append(float(prob))
+                all_outcomes.add(outcome)
+            except (TypeError, ValueError):
+                continue
 
-    plt.xlabel('Outcome')
-    plt.ylabel('Probability')
-    plt.title('Outcomes vs Probability')
-    plt.legend()
+    # 2. Handle the no-data case.
+    if not all_outcomes:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.set_title("Outcomes vs Probability (No data to display)")
+        ax.text(0.5, 0.5, "No valid data provided.", ha="center", va="center")
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        plt.savefig(output_path)
+        plt.close(fig)
+        return
+
+    # 3. Prepare data and layout with intelligent x-axis spacing.
+    labels = sorted(list(datasets_agg.keys()))
+    n_labels = len(labels)
+    is_numeric = all(isinstance(x, (int, float, np.number)) for x in all_outcomes)
+
+    if is_numeric:
+        sorted_outcomes = sorted(list(all_outcomes))
+        x_centers = np.array(sorted_outcomes, dtype=float)
+        xtick_labels = [str(o) for o in sorted_outcomes]
+        min_dist = np.min(np.diff(sorted_outcomes)) if len(sorted_outcomes) > 1 else 1.0
+        total_group_width = min_dist * 0.8
+        bar_width = total_group_width / n_labels
+    else:
+        sorted_outcomes = sorted(map(str, all_outcomes))
+        x_centers = np.arange(len(sorted_outcomes))
+        xtick_labels = sorted_outcomes
+        total_group_width = 0.8
+        bar_width = total_group_width / n_labels
+
+    # 4. Create the grouped and stacked bar plot.
+    fig, ax = plt.subplots(figsize=figsize)
+    cmap = plt.get_cmap(cmap_name, max(1, n_labels))
+
+    for i, label in enumerate(labels):
+        offset = (i - (n_labels - 1) / 2) * bar_width
+        x_positions = x_centers + offset
+
+        for j, outcome in enumerate(sorted_outcomes):
+            probs_list = datasets_agg[label].get(outcome, [])
+            if not probs_list:
+                continue
+
+            max_prob_in_stack = max(probs_list)
+            bottom = 0
+            
+            for prob_segment in probs_list:
+                base_color = cmap(i)
+                
+                # Calculate dynamic alpha for this segment
+                segment_alpha = alpha
+                if max_prob_in_stack > 1e-9: # Avoid division by zero
+                    normalized_prob = prob_segment / max_prob_in_stack
+                    segment_alpha = min_segment_alpha + (alpha - min_segment_alpha) * normalized_prob
+                
+                final_color = (base_color[0], base_color[1], base_color[2], segment_alpha)
+
+                ax.bar(
+                    x_positions[j],
+                    prob_segment,
+                    width=bar_width,
+                    bottom=bottom,
+                    color=final_color,
+                    edgecolor="black",
+                    linewidth=0.5,
+                )
+
+                if show_values and prob_segment > 1e-6:
+                    y_pos = bottom + prob_segment / 2.0
+                    ax.text(
+                        x_positions[j],
+                        y_pos,
+                        value_fmt.format(prob_segment),
+                        ha="center",
+                        va="center",
+                        fontsize=8,
+                        color="white" if segment_alpha > 0.6 else "black",
+                        clip_on=True,
+                    )
+                
+                bottom += prob_segment
+
+    # 5. Finalize and save the plot.
+    ax.set_xlabel("Outcome")
+    ax.set_ylabel("Probability")
+    ax.set_title("Grouped and Stacked Outcome Probabilities by Label")
+    ax.set_xticks(x_centers)
+    ax.set_xticklabels(xtick_labels, rotation=45 if not is_numeric else 0, ha="right")
+    ax.margins(x=0.05, y=0.05)
+
+    legend_patches = [mpatches.Patch(color=cmap(i), label=label, alpha=alpha) for i, label in enumerate(labels)]
+    ax.legend(handles=legend_patches, title="Label")
+    
     plt.tight_layout()
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.savefig(output_path)
-    plt.close()
+
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    plt.savefig(output_path, dpi=300)
+    plt.close(fig)
 
 
 def plot_cumulative_risk(results_dict, output_path):
@@ -175,8 +277,6 @@ def plot_cumulative_risk(results_dict, output_path):
     plt.tight_layout()
     plt.savefig(output_path)
     plt.close()
-
-
 
 
 
