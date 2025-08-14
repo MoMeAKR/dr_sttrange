@@ -13,12 +13,15 @@ def generate_node_function(node, utility_node):
     Dispatches node function generation to the appropriate handler
     based on node_type: 'utility', 'decision', or 'terminal'.
     """
-    node_type = node['node_type']
+    # node_type = node['node_type']
+    
+    node_type = node.get("node_type", "terminal" if len(node['children']) == 1 else "decision")
 
-    if node_type == 'root':
-        # return _generate_utility_node_function(node)
-        return _generate_root_node_function(node,utility_node)
-    elif node_type == 'decision':
+    # if node_type == 'root':
+    #     # return _generate_utility_node_function(node)
+    #     return _generate_root_node_function(node,utility_node)
+    # elif node_type == 'decision':
+    if node_type == 'decision':
         return _generate_decision_node_function(node)
     elif node_type == 'terminal':
         return _generate_terminal_node_function(node, utility_node)
@@ -38,21 +41,21 @@ def _generate_root_node_function(node,utility_node):
     return ('Select firm', None, [(0.5, lambda _: european_project(root_ctx)), (0.5, lambda _: client_work(root_ctx))])
 
     """
-    print(node)
-    print('\n')
-    print(utility_node)
+    # print(node)
+    # print('\n')
+    # print(utility_node)
     stmts = []
     stmts.append({"type": "comment", "text": node['desc']})
-    stmts.append({"type": "assign", "var": "{}_ctx".format(node['name']), "value": "ctx.copy()"})
+    stmts.append({"type": "assign", "var": "{}_ctx".format(node['node_id']), "value": "ctx.copy()"})
     for uv in utility_node['variables']: 
-        stmts.append({"type": "assign", "var": "{}_ctx['{}']".format(node['name'], uv), "value": int("0")})
+        stmts.append({"type": "assign", "var": "{}_ctx['{}']".format(node['node_id'], uv), "value": int("0")})
     
     stmts.append({"type": "assign", "var": "children", "value": []})
     for child in node['children']: 
-        # lamb_func = compile(mcodeutils.simple_lambda_func(['_'], "{}(ctx)".format(child['child'])), filename = "<ast>", mode = "eval")
+        # lamb_func = compile(mcodeutils.simple_lambda_func(['_'], "{}(ctx)".format(child['child'])), filenode_id = "<ast>", mode = "eval")
         # input(lamb_func)
         # input(astor.to_source(lamb_func))
-        stmts.append({"type": "append", "iterable": "children", "value": (0.5, ast.parse("lambda _ : {}({})".format(child['child'], '{}_ctx'.format(node['name']))))})
+        stmts.append({"type": "append", "iterable": "children", "value": (0.5, ast.parse("lambda _ : {}({})".format(child['child'], '{}_ctx'.format(node['node_id']))))})
 
     stmts.append({"type": "assign", "var": "func_results", "value": "('{}', {}, children)".format(node['desc'], None)})
     stmts.append({"type": "return", "var": "func_results"})
@@ -77,7 +80,7 @@ def _generate_decision_node_function(node):
 
         return ('Major role in a European project leads to significant expertise and credibility gains, plus financial reward.', [(1, utility(european_project_major_role_outcome_ctx['money'], european_project_major_role_outcome_ctx['transferable_expertise'], european_project_major_role_outcome_ctx['industry_credibility']), 'Successful leadership or major contribution in a European project yields strong professional and financial benefits.')], None)
     """
-    func_name = node['name']
+    func_name = node['node_id']
     func_args = ['ctx']
     stmts = []
     context_var = f"{func_name}_ctx"
@@ -116,7 +119,7 @@ def _generate_terminal_node_function(node, utility_node):
     Generates a Python function string for a terminal node.
     Handles both deterministic and stochastic (probabilistic) terminal nodes.
     """
-    func_name = node['name']
+    func_name = node['node_id']
     func_args = ['ctx']
     stmts = []
     context_var = f"{func_name}_ctx"
@@ -173,17 +176,6 @@ def _generate_terminal_node_function(node, utility_node):
         args=func_args,
         stmts=stmts
     )
-
-
-# def european_project_major_role_outcome(ctx):
-#     """Major role in a European project leads to significant expertise and credibility gains, plus financial reward."""
-#     european_project_major_role_outcome_ctx = ctx.copy()
-#     european_project_major_role_outcome_ctx['money'] = 3
-#     european_project_major_role_outcome_ctx['transferable_expertise'] = 5
-#     european_project_major_role_outcome_ctx['industry_credibility'] = 5
-#     return ('Major role in a European project leads to significant expertise and credibility gains, plus financial reward.', [(1, utility(ctx['money'], ctx['transferable_expertise'], ctx['industry_credibility']), 'Successful leadership or major contribution in a European project yields strong professional and financial benefits.')], None)
-
-
 
 def default_exp(params): 
 
@@ -257,8 +249,11 @@ def build_result(data):
     # 3. Generate functions for all decision and terminal nodes.
     # other_nodes = [n for n in data['nodes'] if n['node_type'] != 'utility']
 
-    for node in data['nodes']:
-        
+    all_funcs_code.append(_generate_root_node_function(data['root'], utility_params))
+
+    for i, node in enumerate(data['nodes']):
+
+        print('processing node {}'.format(node['node_id']))
         node_func_code = generate_node_function(node, utility_params)
         all_funcs_code.append(node_func_code)
 

@@ -1,3 +1,4 @@
+import networkx as nx
 import numpy as np 
 import matplotlib.pyplot as plt 
 import os 
@@ -173,4 +174,100 @@ def plot_cumulative_risk(results_dict, output_path):
     plt.legend()
     plt.tight_layout()
     plt.savefig(output_path)
+    plt.close()
+
+
+
+
+
+def plot_graph_dot(
+    G: nx.DiGraph,
+    figsize= (12, 8),
+    node_size: int = 1500,
+    node_color: str = "lightblue",
+    font_size: int = 10,
+    edge_font_size: int = 9,
+    with_labels: bool = True,
+    edge_label_attr= None,
+    filename = None
+) -> None:
+    """
+    Plot a NetworkX DiGraph using Graphviz 'dot' layout when available.
+
+    Behavior:
+    - Attempts nx.nx_agraph.graphviz_layout (pygraphviz) first, then nx.nx_pydot.graphviz_layout (pydot),
+      otherwise falls back to nx.spring_layout with a warning.
+    - Node labels use node attributes in order: 'logical_name', 'node_id', 'name', else the node id.
+    - Edge labels: if edge_label_attr provided, uses that attribute value; otherwise it prefers 'prob',
+      then 'child_name', then no edge labels.
+    - If filename is provided, saves the figure; otherwise displays it with plt.show().
+
+    Args:
+        G: Directed graph to plot.
+        figsize: Figure size in inches.
+        node_size: Size for nodes (passed to nx.draw).
+        node_color: Color for nodes.
+        font_size: Font size for node labels.
+        edge_font_size: Font size for edge labels.
+        with_labels: Whether to draw node labels.
+        edge_label_attr: Specific edge attribute name to display on edges (e.g., 'prob').
+        filename: If provided, save image to this path instead of showing.
+    """
+    # Resolve layout using graphviz if possible
+    pos = nx.nx_agraph.graphviz_layout(G, prog="dot")
+
+    # Prepare node labels (prefer logical_name / node_id / name)
+    node_labels = {}
+    for nid, data in G.nodes(data=True):
+        label = None
+        if isinstance(data, dict):
+            label = data.get("logical_name") or data.get("node_id") or data.get("name")
+        if label is None:
+            label = str(nid)
+        node_labels[nid] = label
+
+    plt.figure(figsize=figsize)
+    # Draw nodes and edges
+    nx.draw_networkx_nodes(G, pos, node_size=node_size, node_color=node_color)
+    nx.draw_networkx_edges(G, pos, arrows=True, arrowstyle="->", arrowsize=12)
+
+    # Draw node labels if requested
+    if with_labels:
+        nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=font_size)
+
+    # Determine and draw edge labels
+    # If edge_label_attr explicitly provided, use that; else attempt to auto-select
+    chosen_attr = edge_label_attr
+    if chosen_attr is None:
+        # Inspect a few edges to decide
+        attrs = set()
+        for _, _, ed in G.edges(data=True):
+            if isinstance(ed, dict):
+                attrs.update(ed.keys())
+        for preferred in ("prob", "child_name"):
+            if preferred in attrs:
+                chosen_attr = preferred
+                break
+
+    if chosen_attr:
+        edge_labels = {}
+        for u, v, ed in G.edges(data=True):
+            val = ed.get(chosen_attr) if isinstance(ed, dict) else None
+            # Convert to string for display; skip empty values
+            if val is None:
+                label = ""
+            else:
+                label = str(val)
+            edge_labels[(u, v)] = label
+        # Filter out empty labels for cleaner rendering
+        edge_labels = {k: v for k, v in edge_labels.items() if v}
+        if edge_labels:
+            nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=edge_font_size)
+
+    plt.axis("off")
+    plt.tight_layout()
+    if filename:
+        plt.savefig(filename, bbox_inches="tight")
+    else:
+        plt.show()
     plt.close()
